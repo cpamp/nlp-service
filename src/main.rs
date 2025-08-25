@@ -8,7 +8,7 @@ use axum::{
     http::Request,
 };
 use llama_cpp_rs::options::ModelOptions;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use llama_cpp_rs::LLama;
 use tokenizers::Tokenizer;
 
@@ -31,7 +31,7 @@ async fn require_api_key(req: Request<Body>, next: Next) -> Result<Response, Sta
 }
 
 pub struct AppState {
-    llm: LLama,
+    llm: Arc<Mutex<LLama>>,
     tokenizer: Tokenizer,
 }
 
@@ -44,7 +44,7 @@ async fn main() {
         .expect("Failed to load tokenizer");
 
     let ctx = Arc::new(AppState {
-        llm: llm,
+        llm: Arc::new(Mutex::new(llm)),
         tokenizer: tokenizer,
     });
 

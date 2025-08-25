@@ -19,7 +19,7 @@ struct GenerateResponse {
 #[axum::debug_handler]
 pub async fn handler(State(state): State<Arc<crate::AppState>>, Json(req): Json<GenerateRequest>) -> impl IntoResponse {
     let state = state.clone();
-    let result: String = state.llm
+    let result: String = state.llm.lock().unwrap()
         .predict(req.prompt.into(), Default::default())
         .unwrap_or_else(|_| "Error generating text".to_string());
 
