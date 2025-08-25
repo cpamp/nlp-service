@@ -12,3 +12,4 @@ tokenizers = "0.21.4"
 tokio = { version = "1.47.1", features = ["rt-multi-thread", "macros"] }
 cc = "=1.0.83"
 llama_cpp_rs = "0.3.0"
+llama-cpp-2 = { version="0.1.118", features=["cuda"] }

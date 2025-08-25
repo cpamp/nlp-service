@@ -1,31 +1,29 @@
-use std::{any, convert::Infallible, sync::{Arc, Mutex}};
+use std::{sync::{Arc}};
 
 use axum::{
-    routing::{post, MethodRouter},
-    Json, Router,
+    extract::State, response::IntoResponse, Json
 };
+use serde::{Deserialize, Serialize};
+use tokio::sync::oneshot;
 
-pub fn get_handler(session: Arc<crate::AppState>) -> MethodRouter<X, Infallible>  {
-    return post({
-            let session = session.clone();
-            move |Json(req): Json<GenerateRequest>| {
-                let session = session.clone();
-                async move {
-                    let mut session = session.lock().await;
-                    let max_tokens = req.max_tokens.unwrap_or(128);
+#[derive(Deserialize)]
+pub struct TokenizeRequest {
+    text: String,
+}
 
-                    // Run inference
-                    let result: String = session
-                        .infer::<String>(
-                            req.prompt.as_str(),
-                            None,
-                            Default::default(),
-                            max_tokens,
-                        )
-                        .unwrap_or_else(|_| "Error generating text".to_string());
+#[derive(Serialize)]
+pub struct TokenizeResponse {
+    output: Vec<u32>,
+}
 
-                    Json(GenerateResponse { output: result })
-                }
-            }
-        });
+
+#[axum::debug_handler]
+pub async fn handler(State(state): State<Arc<crate::app_state::AppState>>, Json(req): Json<TokenizeRequest>) -> impl IntoResponse {
+    let (resp_tx, resp_rx) = oneshot::channel();
+
+    state.tokenizer.send((req.text, resp_tx)).await.unwrap();
+
+    let results = resp_rx.await.unwrap();
+    
+    Json(TokenizeResponse { output: results.get_ids().to_vec() })
 }

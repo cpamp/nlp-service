@@ -1,4 +1,5 @@
 use axum::body::Body;
+use axum::middleware;
 use axum::routing::post;
 use axum::{
     Router,
@@ -7,13 +8,12 @@ use axum::{
     response::Response,
     http::Request,
 };
-use llama_cpp_rs::options::ModelOptions;
-use std::sync::{Arc, Mutex};
-use llama_cpp_rs::LLama;
-use tokenizers::Tokenizer;
+use std::sync::{Arc};
 
 mod routes;
 mod config;
+mod app_state;
+//mod llm;
 
 async fn require_api_key(req: Request<Body>, next: Next) -> Result<Response, StatusCode> {
     let api_key_header = req
@@ -30,31 +30,20 @@ async fn require_api_key(req: Request<Body>, next: Next) -> Result<Response, Sta
     Err(StatusCode::UNAUTHORIZED)
 }
 
-pub struct AppState {
-    llm: Arc<Mutex<LLama>>,
-    tokenizer: Tokenizer,
-}
-
 #[tokio::main]
 async fn main() {
-    let llm_opts = ModelOptions::default();
-    let llm = LLama::new("models/gemma-3-270m-it/model.gguf".into(), &llm_opts)
-        .expect("Failed to load model");
-    let tokenizer = Tokenizer::from_file("models/gemma-3-270m-it/tokenizer.json")
-        .expect("Failed to load tokenizer");
-
-    let ctx = Arc::new(AppState {
-        llm: Arc::new(Mutex::new(llm)),
-        tokenizer: tokenizer,
-    });
+    let path = std::env::current_dir().unwrap();
+    println!("The current directory is {}", path.display());
+    let ctx = Arc::new(app_state::get_app_state());
 
     let router = Router::new()
         .route("/generate", post(routes::generate::handler))
-        .route("/tokenize", routes::tokenize::get_handler(ctx))
-        .with_state(ctx);
+        .route("/tokenize", post(routes::tokenize::handler))
+        .with_state(ctx)
+        .layer(middleware::from_fn(require_api_key));
 
     let port = config::get_config().port;
     println!("Running on http://127.0.0.1:{port}");
-    let listener = tokio::net::TcpListener::bind(&format!("0.0.0.0:{port}")).await.unwrap();
+    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await.unwrap();
     axum::serve(listener, router).await.unwrap();
 }

@@ -1,27 +1,28 @@
-use std::{convert::Infallible, sync::{Arc, Mutex}};
+use std::{sync::{Arc}};
 
 use axum::{
-    extract::State, response::IntoResponse, routing::{post, MethodRouter}, Json, Router
+    extract::State, response::IntoResponse, Json
 };
 use serde::{Deserialize, Serialize};
+use tokio::sync::oneshot;
 
 #[derive(Deserialize)]
-struct GenerateRequest {
+pub struct GenerateRequest {
     prompt: String,
-    max_tokens: Option<usize>,
 }
 
 #[derive(Serialize)]
-struct GenerateResponse {
+pub struct GenerateResponse {
     output: String,
 }
 
 #[axum::debug_handler]
-pub async fn handler(State(state): State<Arc<crate::AppState>>, Json(req): Json<GenerateRequest>) -> impl IntoResponse {
-    let state = state.clone();
-    let result: String = state.llm.lock().unwrap()
-        .predict(req.prompt.into(), Default::default())
-        .unwrap_or_else(|_| "Error generating text".to_string());
+pub async fn handler(State(state): State<Arc<crate::app_state::AppState>>, Json(req): Json<GenerateRequest>) -> impl IntoResponse {
+    let (resp_tx, resp_rx) = oneshot::channel();
 
-    Json(GenerateResponse { output: result })
+    state.llm.send((req.prompt, resp_tx)).await.unwrap();
+
+    let results = resp_rx.await.unwrap();
+    
+    Json(GenerateResponse { output: results })
 }
