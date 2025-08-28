@@ -13,7 +13,7 @@ use std::sync::{Arc};
 mod routes;
 mod config;
 mod app_state;
-//mod llm;
+mod llm;
 
 async fn require_api_key(req: Request<Body>, next: Next) -> Result<Response, StatusCode> {
     let api_key_header = req

@@ -2,17 +2,19 @@ use std::ffi::CString;
 use std::io::Write;
 use std::num::NonZeroU32;
 use std::pin::pin;
+use std::path::PathBuf;
 use llama_cpp_2::context::LlamaContext;
 use llama_cpp_2::context::params::LlamaContextParams;
 use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::llama_batch::LlamaBatch;
+use llama_cpp_2::model::params::kv_overrides::ParamOverrideValue;
 use llama_cpp_2::model::{AddBos, LlamaModel, Special};
 use llama_cpp_2::model::params::LlamaModelParams;
-use llama_cpp_2::token::data_array::LlamaTokenDataArray;
+use llama_cpp_2::sampling::LlamaSampler;
 use std::sync::Arc;
 use std::time::Duration;
+use hf_hub::api::sync::{ApiBuilder, ApiError};
 use llama_cpp_2::ggml_time_us;
-use super::args_handler::{Args, Mode};
 
 pub struct LLM {
     pub model: Arc<LlamaModel>,
@@ -23,6 +25,78 @@ pub struct LLM {
     max_token: u32,
     verbose: bool,
 }
+
+#[derive(Debug, Clone)]
+pub enum Model {
+    /// Use an already downloaded model
+    Local {
+        /// The path to the model. e.g. `../hub/models--TheBloke--Llama-2-7B-Chat-GGUF/blobs/08a5566d61d7cb6b420c3e4387a39e0078e1f2fe5f055f3a03887385304d4bfa`
+        /// or `./llama-3.2-1b-instruct-q8_0.gguf`
+        path: PathBuf,
+    },
+    /// Download a model from huggingface (or use a cached version)
+    HuggingFace {
+        /// the repo containing the model. e.g. `TheBloke/Llama-2-7B-Chat-GGUF`
+        repo: String,
+        /// the model name. e.g. `llama-2-7b-chat.Q4_K_M.gguf`
+        model: String,
+    },
+}
+
+impl Model {
+    /// Convert the model to a path - may download from huggingface
+    pub fn get_or_load(self) -> Result<PathBuf, ApiError> {
+        match self {
+            Model::Local { path } => Ok(path),
+            Model::HuggingFace { model, repo } => ApiBuilder::new()
+                .with_progress(true)
+                .build()?
+                //.with_context(|| "unable to create huggingface api")?
+                .model(repo)
+                .get(&model),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum Mode {
+    Chat,
+    Completion,
+}
+
+#[derive(Debug, Clone)]
+pub struct Args {
+    /// The path to the model
+    pub model: Model,
+
+    /// The mode of the code: completion or chat
+    pub mode: Mode,
+
+    // /// The prompt to use - valid only if the mode is `completion`
+    // #[clap(short = 'p', long, required_if_eq("mode", "completion"))]
+    // prompt: Option<String>,
+
+    /// set the length of the prompt + output in tokens
+    pub max_token: u32,
+
+    /// override some parameters of the model
+    pub key_value_overrides: Vec<(String, ParamOverrideValue)>,
+
+    /// how many layers to keep on the gpu - zero is cpu mode
+    pub n_gpu_layers: u32,
+
+    /// set the seed for the RNG
+    pub seed: u32,
+
+    /// number of threads to use during generation
+    pub threads: Option<i32>,
+    pub threads_batch: Option<i32>,
+    
+    /// show the token/s speed at the end of each turn
+    pub verbose: bool,
+
+}
+
 //https://github.com/ramintoosi/llama-rust/blob/main/src/llm.rs
 impl LLM {
 
@@ -51,8 +125,6 @@ impl LLM {
             .get_or_load()
             .expect("failed to get model from args");
 
-        
-
         // Load the model and wrap it in an Arc for shared ownership
         let model = Arc::new(LlamaModel::load_from_file(&backend, model_path, &model_params)
                 .expect("failed to load model"
@@ -61,8 +133,7 @@ impl LLM {
         // initialize the context
         
         let mut ctx_params = LlamaContextParams::default()
-            .with_n_ctx(NonZeroU32::new(args.max_token))
-            .with_seed(args.seed);
+            .with_n_ctx(NonZeroU32::new(args.max_token));
         if let Some(threads) = args.threads {
             ctx_params = ctx_params.with_n_threads(threads);
         }
@@ -84,8 +155,6 @@ impl LLM {
     }
     
     pub fn generate_chat(&mut self, ctx: &mut LlamaContext, prompt: &str) -> String {
-        
-        
         // format the input
         let mut flag_chat = false;
         let input_to_model = match self.mode {
@@ -145,14 +214,11 @@ impl LLM {
 
         let mut llm_output = String::new();
 
+        let mut sampler = LlamaSampler::greedy();
+
         while n_cur <= self.max_token as i32 {
-            // sample the next token
-            let candidates = ctx.candidates();
-
-            let candidates_p = LlamaTokenDataArray::from_iter(candidates, false);
-
             // sample the most likely token
-            let new_token_id = ctx.sample_token_greedy(candidates_p);
+            let new_token_id = sampler.sample(&ctx, n_cur);
 
             // is it an end of stream?
             if ctx.model.is_eog_token(new_token_id) {

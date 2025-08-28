@@ -1,6 +1,7 @@
-use llama_cpp_rs::{options::ModelOptions, LLama};
 use tokenizers::{Encoding, Tokenizer};
 use tokio::sync::{mpsc, oneshot};
+
+use crate::llm;
 
 pub struct AppState {
     pub llm: mpsc::Sender<(String, oneshot::Sender<String>)>,
@@ -11,6 +12,9 @@ pub fn get_app_state() -> AppState {
     let (llm_tx, mut llm_rx) = mpsc::channel::<(String, oneshot::Sender<String>)>(32);
 
     std::thread::spawn(move || {
+        llm::LLM::new(llm::Args {
+            model: llm::Model::Local{path:"models/gemma-3-270m-it/model.gguf".into()}
+        });
         let llm_opts = ModelOptions::default();
         let llm = LLama::new("models/gemma-3-270m-it/model.gguf".into(), &llm_opts)
             .expect("Failed to load model");
